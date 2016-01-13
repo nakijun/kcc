@@ -1,68 +1,106 @@
 
+#include <ctype.h>
 #include <errno.h>
 #include <inttypes.h>
 #include <setjmp.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <ctype.h>
 
 #include "../inc/sizes.h"
 #include "../inc/cc.h"
 #include "cc1.h"
 
-#define INPUTSIZ 120
-
-typedef struct input Input;
-
-struct input {
-	char *fname;
-	unsigned short nline;
-	FILE *fp;
-	char *line, *begin, *p;
-	struct input *next;
-};
-
 unsigned yytoken;
 struct yystype yylval;
-char yytext[IDENTSIZ + 1];
+char yytext[STRINGSIZ+3];
 unsigned short yylen;
+int cppoff;
+int lexmode = CCMODE;
 
-static unsigned lex_ns = NS_IDEN;
-static int safe, eof, incomment;
-static Input *input;
+int namespace = NS_IDEN;
+static int safe, eof;
+Input *input;
+
+static void
+allocinput(char *fname, FILE *fp)
+{
+	Input *ip;
+
+	ip = xmalloc(sizeof(Input));
+	ip->fname = xstrdup(fname);
+	ip->p = ip->begin = ip->line = xmalloc(INPUTSIZ);
+	ip->nline = 0;
+	ip->next = input;
+	ip->fp = fp;
+	input = ip;
+}
+
+void
+ilex(char *fname)
+{
+	static struct keyword keys[] = {
+		{"auto", SCLASS, AUTO},
+		{"break", BREAK, BREAK},
+		{"_Bool", TYPE, BOOL},
+		{"case", CASE, CASE},
+		{"char", TYPE, CHAR},
+		{"const", TQUALIFIER, CONST},
+		{"continue", CONTINUE, CONTINUE},
+		{"default", DEFAULT, DEFAULT},
+		{"do", DO, DO},
+		{"double", TYPE, DOUBLE},
+		{"else", ELSE, ELSE},
+		{"enum", TYPE, ENUM},
+		{"extern", SCLASS, EXTERN},
+		{"float", TYPE, FLOAT},
+		{"for", FOR, FOR},
+		{"goto", GOTO, GOTO},
+		{"if", IF, IF},
+		{"inline", TQUALIFIER, INLINE},
+		{"int", TYPE, INT},
+		{"long", TYPE, LONG},
+		{"register", SCLASS, REGISTER},
+		{"restrict", TQUALIFIER, RESTRICT},
+		{"return", RETURN, RETURN},
+		{"short", TYPE, SHORT},
+		{"signed", TYPE, SIGNED},
+		{"sizeof", SIZEOF, SIZEOF},
+		{"static", SCLASS, STATIC},
+		{"struct", TYPE, STRUCT},
+		{"switch", SWITCH, SWITCH},
+		{"typedef", SCLASS, TYPEDEF},
+		{"union", TYPE, UNION},
+		{"unsigned", TYPE, UNSIGNED},
+		{"void", TYPE, VOID},
+		{"volatile", TQUALIFIER, VOLATILE},
+		{"while", WHILE, WHILE},
+		{NULL, 0, 0},
+	};
+	FILE *fp;
+
+	if (!fname) {
+		fp = stdin;
+		fname = "<stdin>";
+	} else {
+		if ((fp = fopen(fname, "r")) == NULL) {
+			die("error opening input '%s':%s",
+			    fname, strerror(errno));
+		}
+	}
+	allocinput(fname, fp);
+	*input->begin = '\0';
+	keywords(keys, NS_KEYWORD);
+}
 
 bool
 addinput(char *fname)
 {
-	Input *ip;
 	FILE *fp;
-	unsigned short nline = 1;
 
-	/* TODO: Add a field in input to see easier which is the case
-	   where we are */
-
-	if (fname) {
-		if ((fp = fopen(fname, "r")) == NULL)
-			return 0;
-		fname = xstrdup(fname);
-	} else if (!input) {
-		fp = stdin;
-		fname = xstrdup("<stdin>");
-	} else {
-		fname = input->fname;
-		nline = input->nline;
-		fp = NULL;
-	}
-
-	ip = xmalloc(sizeof(Input));
-	ip->fname = fname;
-	ip->next = input;
-	ip->begin = ip->p = ip->line = xmalloc(INPUTSIZ);
-	*ip->begin = '\0';
-	ip->nline = nline;
-	ip->fp = fp;
-	input = ip;
+	if ((fp = fopen(fname, "r")) == NULL)
+		return 0;
+	allocinput(fname, fp);
 	return 1;
 }
 
@@ -70,45 +108,23 @@ static void
 delinput(void)
 {
 	Input *ip = input;
-	FILE *fp = ip->fp;
 
 	if (!ip->next)
 		eof = 1;
-	if (fp) {
-		if (fclose(fp))
-			die("error reading from input file '%s'", ip->fname);
-		if (eof)
-			return;
-		free(ip->fname);
-	}
+	if (fclose(ip->fp))
+		die("error reading from input file '%s'", ip->fname);
+	if (eof)
+		return;
 	input = ip->next;
+	free(ip->fname);
 	free(ip->line);
-	free(ip);
 }
 
-void
-setfname(char *name)
+static void
+newline(void)
 {
-	free(input->fname);
-	input->fname = xstrdup(name);
-}
-
-char *
-getfname(void)
-{
-	return input->fname;
-}
-
-void
-setfline(unsigned short line)
-{
-	input->nline = line;
-}
-
-unsigned short
-getfline(void)
-{
-	return input->nline;
+	if (++input->nline == 0)
+		die("error:input file '%s' too long", input->fname);
 }
 
 static char
@@ -118,55 +134,63 @@ readchar(void)
 	FILE *fp;
 
 repeat:
-	while (feof(input->fp) && !eof)
-		delinput();
-	if (eof) {
-		if (incomment)
-			error("unterminated comment");
-		return '\0';
-	}
 	fp = input->fp;
 
-	if ((c = getc(fp)) == '\\') {
-		if ((c = getc(fp)) == '\n')
+	switch (c = getc(fp)) {
+	case EOF:
+		c = '\0';
+		break;
+	case '\\':
+		if ((c = getc(fp)) == '\n') {
+			newline();
 			goto repeat;
+		}
 		ungetc(c, fp);
 		c = '\\';
-	} else if (c == EOF) {
-		goto repeat;
-	} else if (c == '\n' && ++input->nline == 0) {
-		die("error:input file '%s' too long", getfname());
+		break;
+	case '\n':
+		newline();
+		break;
 	}
+
 	return c;
 }
 
 static void
-comment(char c)
+comment(char type)
 {
-	/* TODO: Ensure that incomment == 0 after a recovery */
-	incomment = 1;
-	if (c == '*') {
-		for (;;) {
-			while (readchar() !=  '*')
+	if (type == '*') {
+		while (!eof) {
+			while (readchar() != '*' && !eof)
 				/* nothing */;
 			if (readchar() == '/')
 				break;
 		}
 	} else {
-		while (readchar() != '\n')
+		while (readchar() != '\n' && !eof)
 			/* nothing */;
 	}
-	incomment = 0;
+	if (eof)
+		error("unterminated comment");
 }
 
-static void
+static bool
 readline(void)
 {
 	char *bp, *lim;
 	char c, peekc = 0;
 
-	lim = input->line + INPUTSIZ;
-	for (bp = input->line; bp != lim; *bp++ = c) {
+repeat:
+	input->begin = input->p = input->line;
+	*input->line = '\0';
+	if (eof)
+		return 0;
+	if (feof(input->fp)) {
+		delinput();
+		goto repeat;
+	}
+	lim = &input->line[INPUTSIZ-1];
+	for (bp = input->line; bp < lim; *bp++ = c) {
 		c = (peekc) ? peekc : readchar();
 		peekc = 0;
 		if (c == '\n' || c == '\0')
@@ -183,22 +207,44 @@ readline(void)
 	}
 
 	if (bp == lim)
-		error("line %u too big in file '%s'", getfline(), getfname());
+		error("line too long");
 	*bp = '\0';
+	return 1;
 }
 
-static bool
+bool
 moreinput(void)
 {
-	char *p;
+	static char file[FILENAME_MAX];
+	static unsigned nline;
+	char *s;
 
 repeat:
-	*(p = input->line) = '\0';
-	readline();
-	if ((p = preprocessor(p)) == '\0')
+	if (!readline())
+		return 0;
+	while (isspace(*input->p))
+		++input->p;
+	input->begin = input->p;
+	if (*input->p == '\0' || cpp() || cppoff) {
+		*input->begin = '\0';
 		goto repeat;
-	input->p = input->begin = p;
-	return *p != '\0';
+	}
+
+	if (onlycpp) {
+		putchar('\n');
+		if (strcmp(file, input->fname)) {
+			strcpy(file, input->fname);
+			s = "#line %u %s\n";
+		} else if (nline+1 != input->nline) {
+			s = "#line %u\n";
+		} else {
+			s = "";
+		}
+		nline = input->nline;
+		printf(s, nline, file);
+	}
+	input->begin = input->p;
+	return 1;
 }
 
 static void
@@ -208,8 +254,61 @@ tok2str(void)
 		error("token too big");
 	strncpy(yytext, input->begin, yylen);
 	yytext[yylen] = '\0';
-	fprintf(stderr ,"%s\n", yytext);
 	input->begin = input->p;
+}
+
+static Symbol *
+readint(char *s, int base, int sign, Symbol *sym)
+{
+	Type *tp = sym->type;
+	struct limits *lim;
+	TUINT u, val, max;
+	int c;
+
+	lim = getlimits(tp);
+	max = lim->max.i;
+	if (*s == '0')
+		++s;
+	if (toupper(*s) == 'X')
+		++s;
+
+	for (u = 0; isxdigit(c = *s++); u = u*base + val) {
+		static char letters[] = "0123456789ABCDEF";
+		val = strchr(letters, c) - letters;
+	repeat:
+		if (u <= max/base && u*base <= max - val)
+			continue;
+		if (tp->sign) {
+			if (tp == inttype)
+				tp = (base==10) ? longtype : uinttype;
+			else if (tp == longtype)
+				tp = (base==10) ? llongtype : ulongtype;
+			else
+				goto overflow;
+		} else {
+			if (tp == uinttype)
+				tp = (sign==UNSIGNED) ? ulongtype : longtype;
+			else if (tp == ulongtype)
+				tp = (sign==UNSIGNED) ? ullongtype : llongtype;
+			else
+				goto overflow;
+		}
+		sym->type = tp;
+		lim = getlimits(tp);
+		max = lim->max.i;
+		goto repeat;
+	}
+
+	if (tp->sign)
+		sym->u.i = u;
+	else
+		sym->u.u = u;
+
+	return sym;
+
+overflow:
+	errorp("overflow in integer constant");
+	return sym;
 }
 
 static unsigned
@@ -218,7 +317,6 @@ integer(char *s, char base)
 	Type *tp;
 	Symbol *sym;
 	unsigned size, sign;
-	long v;
 
 	for (size = sign = 0; ; ++input->p) {
 		switch (toupper(*input->p)) {
@@ -243,10 +341,8 @@ convert:
 	tp = ctype(INT, sign, size);
 	sym = newsym(NS_IDEN);
 	sym->type = tp;
-	v = strtol(s, NULL, base);
-	if (tp == inttype)
-		sym->u.i = v;
-	yylval.sym = sym;
+	sym->flags |= ISCONSTANT;
+	yylval.sym = readint(s, base, sign, sym);
 	return CONSTANT;
 }
 
@@ -301,21 +397,35 @@ escape(void)
 {
 	int c, base;
 
-	++input->p;
-	switch (*input->p++) {
-	case '\\': return '\\';
+	switch (*++input->p) {
 	case 'a':  return '\a';
 	case 'f':  return '\f';
 	case 'n':  return '\n';
 	case 'r':  return '\r';
 	case 't':  return '\t';
 	case 'v':  return '\v';
-	case '\'': return '\\';
-	case '"':  return'"';
-	case '?':  return '?';
-	case 'u':  base = 10; break;
-	case 'x':  base = 16; break;
-	case '0':  base = 8; break;
+	case '"':  return '"';
+	case '\'': return '\'';
+	case '\\': return '\\';
+	case '\?': return '\?';
+	case 'u':
+		/*
+		 * FIXME: universal constants are not correctly handled
+		 */
+		if (!isdigit(*++input->p))
+			warn("incorrect digit for numerical character constant");
+		base = 10;
+		break;
+	case 'x':
+		if (!isxdigit(*++input->p))
+			warn("\\x used with no following hex digits");
+		base = 16;
+		break;
+	case '0':
+		if (!strchr("01234567", *++input->p))
+			warn("\\0 used with no following octal digits");
+		base = 8;
+		break;
 	default:
 		warn("unknown escape sequence");
 		return ' ';
@@ -324,6 +434,7 @@ escape(void)
 	c = strtoul(input->p, &input->p, base);
 	if (errno || c > 255)
 		warn("character constant out of range");
+	--input->p;
 	return c;
 }
 
@@ -335,9 +446,13 @@ character(void)
 
 	if ((c = *++input->p) == '\\')
 		c = escape();
+	else
+		c = *input->p;
+	++input->p;
 	if (*input->p != '\'')
 		error("invalid character constant");
-	++input->p;
+	else
+		++input->p;
 
 	sym = newsym(NS_IDEN);
 	sym->u.i = c;
@@ -349,46 +464,63 @@ character(void)
 static unsigned
 string(void)
 {
-	char buf[STRINGSIZ+1];
-	Symbol *sym;
-	char *bp = buf, c;
+	char *bp = yytext, c;
 
+	*bp++ = '"';
 repeat:
-	for (++input->p; (c = *input->p) != '\0' && c != '"'; ++input->p) {
+	for (++input->p; (c = *input->p) != '"'; ++input->p) {
+		if (c == '\0')
+			error("missing terminating '\"' character");
 		if (c == '\\')
 			c = escape();
-		if (bp == &buf[STRINGSIZ])
+		if (bp == &yytext[STRINGSIZ+1])
 			error("string too long");
 		*bp++ = c;
 	}
 
-	if (c == '\0')
-		error("missing terminating '\"' character");
-	input->begin = input->p + 1;
-
+	input->begin = ++input->p;
 	if (ahead() == '"')
 		goto repeat;
 	*bp = '\0';
-	sym = newsym(NS_IDEN);
-	sym->u.s = xstrdup(buf);
-	sym->type = mktype(chartype, ARY, (bp - buf) + 1, NULL);
-	yylval.sym = sym;
+
+	yylen = bp - yytext + 1;
+	yylval.sym = newsym(NS_IDEN);
+	yylval.sym->flags |= ISSTRING | ISCONSTANT;
+	yylval.sym->u.s = xstrdup(yytext+1);
+	yylval.sym->type = mktype(chartype, ARY, yylen - 2, NULL);
+	*bp++ = '"';
+	*bp = '\0';
 	return CONSTANT;
 }
 
 static unsigned
 iden(void)
 {
-	char *p;
+	Symbol *sym;
+	char *p, *begin;
 
-	for (p = input->p; isalnum(*p) || *p == '_'; ++p)
+	begin = input->p;
+	for (p = begin; isalnum(*p) || *p == '_'; ++p)
 		/* nothing */;
 	input->p = p;
 	tok2str();
-	yylval.sym = lookup(lex_ns);
-	if (yylval.sym->token != IDEN)
-		yylval.token = yylval.sym->u.token;
-	return yylval.sym->token;
+	sym = lookup(namespace, yytext);
+	if (sym->ns == NS_CPP) {
+		if (!disexpand && expand(begin, sym))
+			return next();
+		/*
+		 * it is not a correct macro call, so try to find
+		 * another definition.
+		 */
+		if (lexmode != CPPMODE)
+			sym = nextsym(sym, namespace);
+	}
+	yylval.sym = sym;
+	if (sym->flags & ISCONSTANT)
+		return CONSTANT;
+	if (sym->token != IDEN)
+		yylval.token = sym->u.token;
+	return sym->token;
 }
 
 static unsigned
@@ -439,7 +571,7 @@ logic(int op, int equal, int logic)
 {
 	char c;
 
-	if ((c = *input->p++) == equal)
+	if ((c = *input->p++) == '=')
 		return equal;
 	if (c == op)
 		return logic;
@@ -452,7 +584,7 @@ dot(void)
 {
 	char c;
 
-	if (c = *input->p != '.')
+	if ((c = *input->p) != '.')
 		return '.';
 	if ((c = *++input->p) != '.')
 		error("incorrect token '..'");
@@ -475,6 +607,7 @@ operator(void)
 	case '*': t = follow('=', MUL_EQ, '*'); break;
 	case '/': t = follow('=', DIV_EQ, '/'); break;
 	case '!': t = follow('=', NE, '!'); break;
+	case '#': t = follow('#', '$', '#'); break;
 	case '-': t = minus(); break;
 	case '+': t = plus(); break;
 	case '.': t = dot(); break;
@@ -483,27 +616,20 @@ operator(void)
 	return t;
 }
 
-/* TODO: Ensure that lex_ns is NS_IDEN after a recovery */
-void
-setnamespace(int ns)
-{
-	lex_ns = ns;
-}
+/* TODO: Ensure that namespace is NS_IDEN after a recovery */
 
 static void
 skipspaces(void)
 {
-	char *p;
-
 repeat:
-	for (p = input->begin; isspace(*p); ++p)
-		/* nothing */;
-	if (*p == '\0') {
+	while (isspace(*input->p))
+		++input->p;
+	if (*input->p == '\0' && lexmode != CPPMODE) {
 		if (!moreinput())
 			return;
 		goto repeat;
 	}
-	input->begin = input->p = p;
+	input->begin = input->p;
 }
 
 unsigned
@@ -512,12 +638,15 @@ next(void)
 	char c;
 
 	skipspaces();
-	if (eof) {
+	c = *input->begin;
+	if ((eof || lexmode == CPPMODE) && c == '\0') {
 		strcpy(yytext, "<EOF>");
-		return yytoken = EOFTOK;
+		if (cppctx && eof)
+			error("#endif expected");
+		yytoken = EOFTOK;
+		goto exit;
 	}
 
-	c = *input->begin;
 	if (isalpha(c) || c == '_')
 		yytoken = iden();
 	else if (isdigit(c))
@@ -528,7 +657,9 @@ next(void)
 		yytoken = character();
 	else
 		yytoken = operator();
-	lex_ns = NS_IDEN;
+
+exit:
+	DBG("TOKEN %s", yytext);
 	return yytoken;
 }
 
@@ -537,9 +668,9 @@ expect(unsigned tok)
 {
 	if (yytoken != tok) {
 		if (isgraph(tok))
-			softerror("expected '%c' before '%s'", tok, yytext);
+			errorp("expected '%c' before '%s'", tok, yytext);
 		else
-			softerror("unexpected '%s'", yytext);
+			errorp("unexpected '%s'", yytext);
 	} else {
 		next();
 	}
@@ -584,8 +715,8 @@ discard(void)
 				goto jump;
 			break;
 		}
-		if (!moreinput())
-			exit(-1);
+		if (c == '\0' && !moreinput())
+			exit(1);
 	}
 jump:
 	yytoken = c;

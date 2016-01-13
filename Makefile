@@ -1,8 +1,19 @@
+# scc - Suckless C Compiler
+.POSIX:
 
-DIRS = lib cc1 cc2
+include config.mk
+
+SUBDIRS  = \
+	lib \
+	cc1
 
 all clean:
-	for i in $(DIRS) ;\
+	@echo scc build options:
+	@echo "CFLAGS   = ${CFLAGS}"
+	@echo "LDFLAGS  = ${LDFLAGS}"
+	@echo "CC       = ${CC}"
+	@for i in ${SUBDIRS};\
 	do \
-		(cd $$i && $(MAKE) $@) ;\
-	done
+		(cd $$i; ${MAKE} $(MAKEFLAGS) $@ || exit); \
+	done;
+

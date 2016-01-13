@@ -22,7 +22,7 @@ error(unsigned nerror, ...)
 		vfprintf(stderr, errlist[nerror], va);
 	va_end(va);
 	putc('\n', stderr);
-	exit(EXIT_FAILURE);
+	exit(1);
 }
 
 bool
@@ -42,6 +42,8 @@ repeat:
 int
 main(void)
 {
+	fputs("cc2 is not updated with the output of cc1", stderr);
+	exit(1);
 	while (moreinput()) {
 		parse();
 		optimize();

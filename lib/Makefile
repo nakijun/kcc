@@ -1,7 +1,10 @@
+include ../config.mk
 
-OBJS = die.o xcalloc.o xmalloc.o xrealloc.o xstrdup.o
+OBJS = die.o xcalloc.o xmalloc.o xrealloc.o xstrdup.o debug.o
 
 all: libcc.a
+
+.POSIX:
 
 libcc.a: $(OBJS)
 	ar r $@ $?

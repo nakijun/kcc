@@ -278,7 +278,7 @@ gettype(char *type)
 	case L_UINT64:
 		return &l_uint64;
 	case L_FUNCTION:
-		return &Funct;;
+		return &Funct;
 	default:
 		error(ETYPERR);
 	}
@@ -423,7 +423,6 @@ cast(char *token)
 static void
 expr(char *token)
 {
-	Node *np;
 	void (*fun)(char *);
 	unsigned c;
 
@@ -438,8 +437,6 @@ static void
 expression(char *token)
 {
 	Node *np;
-	void (*fun)(char *);
-	unsigned c;
 
 	if (!curfun)
 		error(ESYNTAX);
@@ -464,7 +461,7 @@ oreturn(char *token)
 	if (token = strtok(NULL, "\t")) {
 		expr(token);
 		lp = pop();
-		np ->left = lp;
+		np->left = lp;
 		np->type = lp->type;
 	} else {
 		np->left = NULL;

@@ -9,12 +9,11 @@
 #include "../inc/cc.h"
 #include "cc1.h"
 
-extern void ikeywords(void), lexfile(char *file);
-
 int warnings;
 jmp_buf recover;
 
-static char *output;
+static char *output, *arg0;
+int onlycpp;
 
 static void
 clean(void)
@@ -28,7 +27,9 @@ clean(void)
 static void
 usage(void)
 {
-	fputs("usage: cc1 [-w] [-o output] [input]\n", stderr);
+	fprintf(stderr,
+	        "usage: %s [-E] [-Dmacro[=value]] [-Idir] [-w] [-d] [-o output] [input]\n",
+	        arg0);
 	exit(1);
 }
 
@@ -39,7 +40,12 @@ main(int argc, char *argv[])
 
 	atexit(clean);
 
+	arg0 = (cp = strrchr(*argv, '/')) ? cp+1 : *argv;
+	if (!strcmp(arg0, "cpp"))
+		onlycpp = 1;
+
 	for (;;) {
+	nextiter:
 		--argc, ++argv;
 		if (!*argv || argv[0][0] != '-' || argv[0][1] == '-')
 			break;
@@ -48,6 +54,18 @@ main(int argc, char *argv[])
 			case 'w':
 				warnings = 1;
 				break;
+			case 'E':
+				onlycpp = 1;
+				break;
+			case 'D':
+				defmacro(cp+1);
+				goto nextiter;
+			case 'd':
+				DBGON();
+				break;
+			case 'I':
+				incdir(cp+1);
+				goto nextiter;
 			case 'o':
 				if (!*++argv || argv[0][0] == '-')
 					usage();
@@ -65,12 +83,15 @@ main(int argc, char *argv[])
 	if (argc > 1)
 		usage();
 
-	ikeywords();
+	icpp();
+	ilex(*argv);
 
-	if (!addinput(*argv))
-		die("error opening input file '%s'", *argv);
-	for (next(); yytoken != EOFTOK; extdecl())
-		/* nothing */;
+	if (onlycpp) {
+		outcpp();
+	} else {
+		for (next(); yytoken != EOFTOK; decl())
+			/* nothing */;
+	}
 
 	return 0;
 }

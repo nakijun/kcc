@@ -7,9 +7,70 @@
 #include "../inc/sizes.h"
 #include "../inc/cc.h"
 #include "cc1.h"
+#include "arch.h"
 
 #define NR_TYPE_HASH 16
 
+/*
+ * Compiler can generate warnings here if the ranges of TINT,
+ * TUINT and TFLOAT are smaller than any of the constants in this
+ * array. Ignore them if you know that the target types are correct
+ */
+static struct limits limits[][4] = {
+	{
+		{	/* 0 = unsigned 1 byte */
+			.min.i = 0,
+			.max.i = 255
+		},
+		{	/* 1 = unsigned 2 bytes */
+			.min.i = 0,
+			.max.i = 65535u
+		},
+		{	/* 2 = unsigned 4 bytes */
+			.min.i = 0,
+			.max.i = 4294967295u
+		},
+		{	/* 3 = unsigned 8 bytes */
+			.min.i = 0,
+			.max.i = 18446744073709551615u
+		}
+	},
+	{
+		{	/* 0 = signed 1 byte */
+			.min.i = -127,
+			.max.i = 127
+		},
+		{	/* 1 = signed 2 byte */
+			.min.i = -32767,
+			.max.i = 32767
+		},
+		{	/* 2 = signed 4 byte */
+			.min.i = -2147483647L,
+			.max.i = 2147483647L
+		},
+		{	/* 3 = signed 8 byte */
+			.min.i = -9223372036854775807LL,
+			.max.i = 9223372036854775807LL,
+		}
+	},
+	{
+		{
+			/* 0 = float 4 bytes */
+			.min.f = -1,
+			.max.f = 2
+		},
+		{
+			/* 1 = float 8 bytes */
+			.min.f = -1,
+			.max.f = 2,
+		},
+		{
+			/* 2 = float 16 bytes */
+			.min.f = -1,
+			.max.f = 2,
+		}
+	}
+};
 
 /*
  * Initializaion of type pointers were done with
@@ -18,104 +79,208 @@
  * syntax, so I have switched it to this ugly form
  * I hope I will change it again in the future
  */
+/*
+ * TODO: There are fields here that depends of the
+ *       architecture
+ */
 static Type types[] = {
 	{       /* 0 = voidtype */
 		.op = VOID,
-		.letter = L_VOID
+		.letter = L_VOID,
+		.printed = 1
 	},
 	{       /* 1 = pvoidtype */
 		.op = PTR,
-		.letter = L_POINTER
+		.letter = L_POINTER,
+		.size = 2,
+		.align = 2,
+		.printed = 1,
+		.defined = 1,
 	},
 	{      /* 2 = booltype */
 		.op = INT,
 		.letter = L_BOOL,
 		.defined = 1,
-		.n.rank = RANK_BOOL
+		.size = 1,
+		.integer = 1,
+		.arith = 1,
+		.align = 1,
+		.n.rank = RANK_BOOL,
+		.printed = 1
 	},
 	{       /* 3 = schartype */
 		.op = INT,
 		.letter = L_SCHAR,
 		.defined = 1,
-		.n.rank = RANK_SCHAR
+		.size = 1,
+		.integer = 1,
+		.arith = 1,
+		.align = 1,
+		.sign = 1,
+		.n.rank = RANK_SCHAR,
+		.printed = 1
 	},
 	{      /* 4 = uchartype */
 		.op = INT,
 		.letter = L_UCHAR,
 		.defined = 1,
-		.n.rank = RANK_UCHAR
+		.size = 1,
+		.integer = 1,
+		.arith = 1,
+		.align = 1,
+		.n.rank = RANK_UCHAR,
+		.printed = 1
 	},
 	{      /* 5 = chartype */
 		.op = INT,
 		.letter = L_CHAR,
 		.defined = 1,
-		.n.rank = RANK_CHAR
+		.size = 1,
+		.integer = 1,
+		.arith = 1,
+		.align = 1,
+		.sign = 1,
+		.n.rank = RANK_CHAR,
+		.printed = 1
 	},
 	{       /* 6 = ushortype */
 		.op = INT,
 		.letter = L_USHORT,
 		.defined = 1,
-		.n.rank = RANK_USHORT
+		.size = 2,
+		.integer = 1,
+		.arith = 1,
+		.align = 1,
+		.n.rank = RANK_USHORT,
+		.printed = 1
 	},
 	{       /* 7 = shortype */
 		.op = INT,
 		.letter = L_SHORT,
 		.defined = 1,
-		.n.rank = RANK_SHORT
+		.size = 2,
+		.integer = 1,
+		.arith = 1,
+		.align = 1,
+		.sign = 1,
+		.n.rank = RANK_SHORT,
+		.printed = 1
 	},
 	{       /* 8 = uinttype */
 		.op = INT,
 		.letter = L_UINT,
 		.defined = 1,
-		.n.rank = RANK_UINT
+		.size = 2,
+		.integer = 1,
+		.arith = 1,
+		.align = 1,
+		.n.rank = RANK_UINT,
+		.printed = 1
 	},
 	{       /* 9 = inttype */
 		.op = INT,
 		.letter = L_INT,
 		.defined = 1,
-		.n.rank = RANK_INT
+		.size = 2,
+		.integer = 1,
+		.arith = 1,
+		.align = 1,
+		.sign = 1,
+		.n.rank = RANK_INT,
+		.printed = 1
 	},
 	{      /* 10 = longtype */
 		.op = INT,
 		.letter = L_LONG,
 		.defined = 1,
-		.n.rank = RANK_LONG
+		.size = 4,
+		.integer = 1,
+		.arith = 1,
+		.align = 1,
+		.sign = 1,
+		.n.rank = RANK_LONG,
+		.printed = 1
 	},
-	{       /* 11 = ulongtype
+	{       /* 11 = ulongtype */
 		.op = INT,
 		.letter = L_ULONG,
 		.defined = 1,
-		.n.rank = RANK_ULONG
+		.size = 4,
+		.integer = 1,
+		.arith = 1,
+		.align = 1,
+		.n.rank = RANK_ULONG,
+		.printed = 1
 	},
 	{	/* 12 = ullongtype */
 		.op = INT,
 		.letter = L_ULLONG,
 		.defined = 1,
-		.n.rank = RANK_ULLONG
+		.size = 8,
+		.integer = 1,
+		.arith = 1,
+		.align = 1,
+		.n.rank = RANK_ULLONG,
+		.printed = 1
 	},
 	{       /* 13 = llongtype */
 		.op = INT,
 		.letter = L_LLONG,
 		.defined = 1,
-		.n.rank = RANK_LLONG
+		.size = 8,
+		.integer = 1,
+		.arith = 1,
+		.align = 1,
+		.sign = 1,
+		.n.rank = RANK_LLONG,
+		.printed = 1
 	},
 	{       /* 14 = floattype */
 		.op = FLOAT,
 		.letter = L_FLOAT,
 		.defined = 1,
-		.n.rank = RANK_FLOAT
+		.size = 4,
+		.arith = 1,
+		.align = 1,
+		.n.rank = RANK_FLOAT,
+		.printed = 1
 	},
 	{       /* 15 = doubletype */
 		.op = FLOAT,
 		.letter = L_DOUBLE,
 		.defined = 1,
-		.n.rank = RANK_DOUBLE
+		.size = 8,
+		.arith = 1,
+		.align = 1,
+		.n.rank = RANK_DOUBLE,
+		.printed = 1
 	},
 	{       /* 16 = ldoubletype */
 		.op = FLOAT,
 		.letter = L_LDOUBLE,
 		.defined = 1,
-		.n.rank = RANK_LDOUBLE
+		.size = 16,
+		.arith = 1,
+		.align = 1,
+		.n.rank = RANK_LDOUBLE,
+		.printed = 1
+	},
+	{       /* 17 = sizettype */
+		.op = INT,
+		.letter = L_UINT,
+		.defined = 1,
+		.size = 2,
+		.integer = 1,
+		.arith = 1,
+		.align = 1,
+		.n.rank = RANK_UINT,
+		.printed = 1
+	},
+	{      /* 18 = ellipsis */
+		.op = ELLIPSIS,
+		.letter = L_ELLIPSIS,
+		.defined = 1,
+		.printed = 1
 	}
 };
 
@@ -127,12 +292,41 @@ Type *voidtype = &types[0], *pvoidtype = &types[1],
 	*longtype = &types[10], *ulongtype = &types[11],
 	*ullongtype = &types[12], *llongtype = &types[13],
 	*floattype = &types[14], *doubletype = &types[15],
-	*ldoubletype = &types[16];
+	*ldoubletype = &types[16], *sizettype = &types[17],
+	*ellipsistype = &types[18];
 
 static Symbol dummy0 = {.u.i = 0, .type = &types[9]},
               dummy1 = {.u.i = 1, .type = &types[9]};
 Symbol *zero = &dummy0, *one = &dummy1;
 
+struct limits *
+getlimits(Type *tp)
+{
+	int ntable, ntype;
+
+	switch (tp->op) {
+	case ENUM:
+	case INT:
+		ntable = tp->sign;
+		switch (tp->size) {
+		case 1: ntype = 0; break;
+		case 2: ntype = 1; break;
+		case 4: ntype = 2; break;
+		case 8: ntype = 3; break;
+		}
+		break;
+	case FLOAT:
+		ntable = 2;
+		switch (tp->size) {
+		case 4:  ntype = 0; break;
+		case 8:  ntype = 1; break;
+		case 16: ntype = 2; break;
+		}
+		break;
+	}
+
+	return &limits[ntable][ntype];
+}
 
 Type *
 ctype(unsigned type, unsigned sign, unsigned size)
@@ -159,9 +353,6 @@ ctype(unsigned type, unsigned sign, unsigned size)
 			goto invalid_type;
 		return booltype;
 	case 0:
-		if (!sign && !size) {
-			warn("type defaults to 'int' in declaration");
-		}
 		/* fallthrough */
 	case INT:
 		switch (size) {
@@ -196,53 +387,126 @@ ctype(unsigned type, unsigned sign, unsigned size)
 		}
 		break;
 	}
-	fputs("internal type error, aborting\n", stderr);
-	abort();
 
 invalid_type:
 	error("invalid type specification");
 }
 
+static TINT
+typesize(Type *tp)
+{
+	Symbol **sp;
+	TINT n, size, align;
+
+	switch (tp->op) {
+	case ARY:
+		return tp->n.elem * tp->type->size;
+	case PTR:
+		return pvoidtype->size;
+	case STRUCT:
+		size = 0;
+		n = tp->n.elem;
+		for (sp = tp->p.fields; n--; ++sp) {
+			tp = (*sp)->type;
+			align = tp->align-1;
+			size = size + align & ~align;
+			size += tp->size;
+		}
+		/* TODO: Add aligment of the first field */
+		return size;
+	case UNION:
+		size = 0;
+		n = tp->n.elem;
+		for (sp = tp->p.fields; n--; ++sp) {
+			tp = (*sp)->type;
+			if (tp->size > size)
+				size = tp->size;
+		}
+		/* TODO: Add aligment of the worst field */
+		return size;
+	case ENUM:
+		return inttype->size;
+	}
+	return 0;
+}
+
 Type *
-mktype(Type *tp, unsigned op, short nelem, void *data)
+mktype(Type *tp, int op, TINT nelem, Type *pars[])
 {
 	static Type *typetab[NR_TYPE_HASH];
 	Type **tbl, type;
 	unsigned t;
 	Type *bp;
-	static char letters[] = {
-		[PTR] = L_POINTER,   [ARY] = L_ARRAY,
-		[FTN] = L_FUNCTION,  [ENUM] = L_INT,
-		[STRUCT] = L_STRUCT, [UNION] = L_UNION
-	};
+	int c, k_r = 0;
 
 	if (op == PTR && tp == voidtype)
 		return pvoidtype;
 
+	if (op == KRFTN) {
+		k_r = 1;
+		op = FTN;
+	}
+	switch (op) {
+	case PTR:     c = L_POINTER;  break;
+	case ARY:     c = L_ARRAY;    break;
+	case FTN:     c = L_FUNCTION; break;
+	case ENUM:    c = L_ENUM;     break;
+	case STRUCT:  c = L_STRUCT;   break;
+	case UNION:   c = L_UNION;    break;
+	}
+
 	type.type = tp;
 	type.op = op;
-	type.letter = letters[op];
-	type.pars = data;
+	type.defined = 0;
+	type.arith = 0;
+	type.sign = 0;
+	type.integer = 0;
+	type.printed = 0;
+	type.aggreg = 0;
+	type.k_r = k_r;
+	type.letter = c;
+	type.p.pars = pars;
 	type.n.elem = nelem;
 	type.ns = 0;
+	/* TODO: Set aligment for new types */
 
-	if (op == ARY && nelem == 0 || op == STRUCT || op == UNION)
-		type.defined = 0;
-	else
+	switch (op) {
+	case ARY:
+		if (nelem == 0)
+			break;
+		/* PASSTROUGH */
+	case FTN:
+	case PTR:
 		type.defined = 1;
+		break;
+	case ENUM:
+		type.printed = 1;
+		type.integer = 1;
+		type.arith = 1;
+		type.n.rank = RANK_INT;
+		break;
+	case STRUCT:
+	case UNION:
+		type.aggreg = 1;
+		break;
+	}
 
-	t = (op ^ (char) ((unsigned short) tp >> 3)) & NR_TYPE_HASH-1;
+	t = (op ^ (uintptr_t) tp >> 3) & NR_TYPE_HASH-1;
 	tbl = &typetab[t];
 	for (bp = *tbl; bp; bp = bp->next) {
-		if (eqtype(bp, &type)) {
-			/* FIXME: data can be a pointer to static data */
-			free(data);
+		if (eqtype(bp, &type) && op != STRUCT && op != UNION) {
+			/*
+			 * pars was allocated by the caller
+			 * but the type already exists, so
+			 * we have to deallocted it
+			 */
+			free(pars);
 			return bp;
 		}
 	}
 
-	bp = xmalloc(sizeof(*bp));
-	*bp = type;
+	type.size = typesize(&type);
+	bp = duptype(&type);
 	bp->next = *tbl;
 	return *tbl = bp;
 }
@@ -250,32 +514,35 @@ mktype(Type *tp, unsigned op, short nelem, void *data)
 bool
 eqtype(Type *tp1, Type *tp2)
 {
-	unsigned n;
+	TINT n;
 	Type **p1, **p2;
 
+	if (!tp1 || !tp2)
+		return 0;
 	if (tp1 == tp2)
 		return 1;
-	if (tp1->op != tp2->op || tp1->n.elem != tp2->n.elem)
-		return 0;
 	switch (tp1->op) {
 	case ARY:
+		if (tp1->op != tp2->op || tp1->n.elem != tp2->n.elem)
+			return 0;
 	case PTR:
 		return eqtype(tp1->type, tp2->type);
 	case UNION:
 	case STRUCT:
 	case FTN:
-		p1 = tp1->pars, p2 = tp2->pars;
-		for (n = tp1->n.elem; n != 0; --n) {
+		if (tp1->op != tp2->op || tp1->n.elem != tp2->n.elem)
+			return 0;
+		p1 = tp1->p.pars, p2 = tp2->p.pars;
+		for (n = tp1->n.elem; n > 0; --n) {
 			if (!eqtype(*p1++, *p2++))
 				return 0;
 		}
 		return 1;
+	case VOID:
 	case ENUM:
-		/* TODO: Check when two enum are the same type */
-	case INT: case FLOAT:
+		return 0;
+	case INT:
+	case FLOAT:
 		return tp1->letter == tp2->letter;
-	default:
-		fputs("internal type error, aborting\n", stderr);
-		abort();
 	}
 }
